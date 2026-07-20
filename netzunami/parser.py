@@ -25,20 +25,59 @@ BLOCK_HEADERS = {
         r"^aaa\s",
         r"^crypto\s",
     ],
+    "huawei": [
+        r"^interface\s",
+        r"^vlan\s",
+        r"^vlanif\s",
+        r"^bgp\s",
+        r"^ospf\s",
+        r"^isis\s",
+        r"^rip\s",
+        r"^acl\s",
+        r"^traffic\S+",
+        r"^qos\s",
+        r"^ip\s+route-static\s",
+        r"^ip\s+prefix-list\s",
+        r"^route-policy\s",
+        r"^snmp-agent\s",
+        r"^ntp\s",
+        r"^info-center\s",
+        r"^stp\s",
+        r"^lldp\s",
+        r"^mac-address\s",
+        r"^user-interface\s",
+        r"^local-user\s",
+        r"^radius-server\s",
+        r"^acl\s",
+    ],
+    "juniper": [
+        r"^\s+interface\s",
+        r"^\s+policy-statement\s",
+        r"^\s+community\s",
+        r"^\s+prefix-list\s",
+        r"^\s+bgp\s",
+        r"^\s+ospf\s",
+        r"^\s+isis\s",
+        r"^\s+vlan\s",
+        r"^\s+firewall\s",
+        r"^\s+nat\s",
+        r"^\s+snmp\s",
+        r"^\s+syslog\s",
+        r"^\s+ntp\s",
+        r"^\s+security\s",
+    ],
 }
 
 
-def parse_cisco(config_text: str) -> list[ConfigBlock]:
+def parse_block(config_text: str, patterns: list[str], comment_chars: tuple[str, ...] = ("!",)) -> list[ConfigBlock]:
     blocks: list[ConfigBlock] = []
     current_block: ConfigBlock | None = None
     lines = config_text.splitlines()
-
-    patterns = BLOCK_HEADERS["cisco"]
     compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
 
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if not stripped or stripped.startswith("!"):
+        if not stripped or stripped.startswith(comment_chars):
             continue
 
         is_header = any(p.match(stripped) for p in compiled)
@@ -62,7 +101,44 @@ def parse_cisco(config_text: str) -> list[ConfigBlock]:
     return blocks
 
 
+def parse_cisco(config_text: str) -> list[ConfigBlock]:
+    return parse_block(config_text, BLOCK_HEADERS["cisco"], ("!",))
+
+
+def parse_huawei(config_text: str) -> list[ConfigBlock]:
+    return parse_block(config_text, BLOCK_HEADERS["huawei"], ("#", "!"))
+
+
+def parse_juniper(config_text: str) -> list[ConfigBlock]:
+    blocks = []
+    current = ConfigBlock(name="root")
+    depth = 0
+    for i, line in enumerate(config_text.splitlines()):
+        stripped = line.rstrip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("!"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if "{" in stripped:
+            blocks.append(current)
+            name = stripped.replace("{", "").strip().split("\n")[0]
+            current = ConfigBlock(name=name, vendor="juniper")
+            current.lines.append(ConfigLine(number=i + 1, text=stripped, indent=indent))
+            depth += 1
+        elif "}" in stripped:
+            if current.lines:
+                blocks.append(current)
+            current = ConfigBlock(name="root", vendor="juniper")
+            depth = max(0, depth - 1)
+        else:
+            current.lines.append(ConfigLine(number=i + 1, text=stripped, indent=indent))
+    if current.lines and current.name != "root":
+        blocks.append(current)
+    return blocks
+
+
 def parse_running_config(config_text: str, vendor: str = "cisco") -> list[ConfigBlock]:
-    if vendor == "cisco":
-        return parse_cisco(config_text)
+    if vendor == "huawei":
+        return parse_huawei(config_text)
+    if vendor == "juniper":
+        return parse_juniper(config_text)
     return parse_cisco(config_text)

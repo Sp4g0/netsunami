@@ -19,7 +19,7 @@ from .indexer import index_manuals, search
 from .analyzer import analyze_with_rules, analyze_with_knowledge
 from .listener import listen_session
 from .models import Finding, Severity
-from .bulk import read_hosts, backup as bulk_backup, bulk_apply, render_template
+from .bulk import read_hosts, backup as bulk_backup, bulk_apply, render_template, read_excel, push_from_excel
 
 console = Console()
 cfg = Config.load()
@@ -248,6 +248,37 @@ def push(hosts_file, template_file, yes, workers, vars):
             console.print(f"  [green]✓[/green] {r['host']}")
         elif r["status"] == "error":
             console.print(f"  [red]✗[/red] {r['host']}: {r.get('error', '')}")
+
+
+@bulk.command()
+@click.argument("excel_path", type=click.Path(exists=True))
+@click.argument("template_file", type=click.Path(exists=True))
+@click.option("--host-col", default="Host", help="Nome colonna host")
+@click.option("--sheet", default=0, help="Foglio Excel (nome o numero)")
+@click.option("-y", "--yes", is_flag=True, help="Salta conferma")
+@click.option("-w", "--workers", default=5, help="Thread paralleli")
+def excel(excel_path, template_file, host_col, sheet, yes, workers):
+    """Push da Excel: ogni riga = variabili template, colonna = {{Colonna}}"""
+    with open(template_file) as f:
+        template = f.read()
+
+    rows = read_excel(excel_path, sheet)
+    if not rows:
+        console.print("[red]Nessuna riga letta dall'Excel[/red]")
+        return
+
+    console.print(f"[bold cyan]Excel: {len(rows)} righe, colonne: {list(rows[0].keys())}[/bold cyan]")
+    console.print(f"  Host column: [green]{host_col}[/green]")
+    results = push_from_excel(
+        excel_path, template, host_column=host_col, sheet=sheet,
+        confirm=not yes, max_workers=workers,
+    )
+    ok = sum(1 for r in results if r["status"] == "ok")
+    err = sum(1 for r in results if r["status"] in ("error", "cancelled"))
+    console.print(f"[green]OK: {ok}[/green]  [red]Falliti: {err}[/red]")
+    for r in results:
+        if r["status"] == "ok":
+            console.print(f"  [green]✓[/green] {r['host']}")
 
 
 @cli.command()

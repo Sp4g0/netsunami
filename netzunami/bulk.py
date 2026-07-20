@@ -106,7 +106,65 @@ def bulk_apply(
     return results
 
 
+def read_excel(excel_path: str, sheet: str | int = 0) -> list[dict]:
+    try:
+        import pandas as pd
+    except ImportError:
+        print("  Serve pandas: pip install pandas openpyxl")
+        return []
+
+    df = pd.read_excel(excel_path, sheet_name=sheet, dtype=str)
+    df = df.fillna("")
+    return df.to_dict(orient="records")
+
+
 def render_template(template: str, variables: dict[str, str]) -> str:
     for key, val in variables.items():
         template = template.replace(f"{{{{{key}}}}}", val)
     return template
+
+
+def push_from_excel(
+    excel_path: str,
+    template: str,
+    host_column: str = "Host",
+    sheet: str | int = 0,
+    passwords: dict[str, str] | None = None,
+    max_workers: int = 5,
+    confirm: bool = True,
+) -> list[dict]:
+    rows = read_excel(excel_path, sheet)
+    if not rows:
+        return []
+
+    hosts = []
+    for row in rows:
+        host = row.get(host_column, "").strip()
+        if not host:
+            continue
+        user = row.get("User", "admin")
+        port = int(row.get("Port", "22"))
+        hosts.append({"host": host, "user": user, "port": port, "vars": row})
+
+    results = []
+    passwords = passwords or {}
+
+    def _apply(entry: dict):
+        rendered = render_template(template, entry["vars"])
+        pw = passwords.get(entry["host"], "")
+        return apply_template(entry["host"], entry["user"], rendered, entry["port"], pw)
+
+    if confirm:
+        print(f"\n  Righe Excel: {len(rows)}")
+        print(f"  Host column: {host_column}")
+        print(f"  Template:\n{template}\n")
+        resp = input("  Confermi push? [y/N]: ")
+        if resp.lower() != "y":
+            return [{"host": e["host"], "status": "cancelled"} for e in hosts]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_apply, e): e for e in hosts}
+        for f in as_completed(futures):
+            results.append(f.result())
+
+    return results
