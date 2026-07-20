@@ -1,6 +1,6 @@
 # Netzunami — Network Config Analyzer AI
 
-**Prototipo v0.1.0 — bozza da testare**
+**Idea di: Sp4g0 — Prototipo v0.1.0 — bozza da testare**
 
 ## Concept
 
