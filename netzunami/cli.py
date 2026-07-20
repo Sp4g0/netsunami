@@ -20,6 +20,7 @@ from .analyzer import analyze_with_rules, analyze_with_knowledge
 from .listener import listen_session
 from .models import Finding, Severity
 from .bulk import read_hosts, backup as bulk_backup, bulk_apply, render_template, read_excel, push_from_excel
+from .auto_index import auto_index
 
 console = Console()
 cfg = Config.load()
@@ -87,6 +88,7 @@ def ssh(host, user, key, port, enable, save):
 @click.option("-v", "--vendor", default="cisco", help="Device vendor")
 def analyze(config_file, vendor):
     """Analyze a running-config file"""
+    auto_index(verbose=True)
     with open(config_file) as f:
         raw = f.read()
 
@@ -284,6 +286,7 @@ def excel(excel_path, template_file, host_col, sheet, yes, workers):
 @cli.command()
 def info():
     """Show netzunami status"""
+    auto_index(verbose=True)
     data_dir = Path(cfg.data_dir)
     knowledge_dir = data_dir / "knowledge"
 

@@ -1,5 +1,13 @@
 import paramiko
 import re
+import time
+
+VENDOR_PROMPTS = {
+    "cisco": r"[>#]\s*$",
+    "huawei": r"[>#]\s*$",
+    "aethra": r"[>#]\s*$",
+    "juniper": r"%\s*$",
+}
 
 
 def ssh_connect(
@@ -62,6 +70,37 @@ def ssh_connect(
     return client
 
 
+def _recv_until_prompt(shell, prompt_re: str, timeout_sec: int = 15) -> str:
+    output = ""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            data = shell.recv(65535).decode("utf-8", errors="replace")
+            output += data
+            if re.search(prompt_re, data, re.MULTILINE):
+                break
+        except:
+            break
+    return output
+
+
+def detect_vendor(shell) -> str:
+    shell.send("\n")
+    time.sleep(1)
+    try:
+        banner = shell.recv(4096).decode("utf-8", errors="replace").lower()
+    except:
+        banner = ""
+
+    if "huawei" in banner or "vrp" in banner:
+        return "huawei"
+    if "aethra" in banner:
+        return "aethra"
+    if "junos" in banner or "junipers" in banner or "juniper" in banner:
+        return "juniper"
+    return "cisco"
+
+
 def run_commands(
     client: paramiko.SSHClient,
     commands: list[str],
@@ -70,41 +109,51 @@ def run_commands(
 ) -> str:
     shell = client.invoke_shell()
     shell.settimeout(30)
-
     output = ""
+    prompt_re = VENDOR_PROMPTS.get(vendor, r"[>#]\s*$")
+
+    if vendor == "huawei":
+        shell.send("screen-length 0 temporary\n")
+        _recv_until_prompt(shell, prompt_re)
+        for cmd in commands:
+            shell.send(f"{cmd}\n")
+            output += _recv_until_prompt(shell, prompt_re)
+        shell.send("quit\n")
+        shell.close()
+        return output
+
+    if vendor == "aethra":
+        if enable:
+            shell.send("enable\n")
+            _recv_until_prompt(shell, prompt_re)
+        shell.send("terminal length 0\n")
+        _recv_until_prompt(shell, prompt_re)
+        for cmd in commands:
+            shell.send(f"{cmd}\n")
+            output += _recv_until_prompt(shell, prompt_re)
+        shell.close()
+        return output
+
+    if vendor == "juniper":
+        shell.send("set cli screen-length 0\n")
+        _recv_until_prompt(shell, prompt_re)
+        for cmd in commands:
+            shell.send(f"{cmd}\n")
+            output += _recv_until_prompt(shell, prompt_re)
+        shell.close()
+        return output
+
     if vendor == "cisco":
         if enable:
             shell.send("enable\n")
-            shell.recv(4096)
+            _recv_until_prompt(shell, prompt_re)
             shell.send("terminal length 0\n")
         else:
             shell.send("terminal length 0\n")
-        shell.recv(4096)
-
+        _recv_until_prompt(shell, prompt_re)
         for cmd in commands:
             shell.send(f"{cmd}\n")
-            import time
-
-            time.sleep(1)
-            while True:
-                try:
-                    data = shell.recv(65535).decode("utf-8", errors="replace")
-                    output += data
-                    prompt_match = re.search(r"[>#]\s*$", data, re.MULTILINE)
-                    if prompt_match:
-                        break
-                except:
-                    break
-    else:
-        for cmd in commands:
-            shell.send(f"{cmd}\n")
-            import time
-
-            time.sleep(1)
-            try:
-                output += shell.recv(65535).decode("utf-8", errors="replace")
-            except:
-                pass
+            output += _recv_until_prompt(shell, prompt_re)
 
     shell.close()
     return output
