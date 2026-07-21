@@ -5,7 +5,7 @@ import re
 import tkinter as tk
 from tkinter import font as tkfont
 
-from ..connector import ssh_connect, run_commands, detect_vendor
+from ..connector import ssh_connect, run_commands, detect_vendor, fetch_device_info
 from ..analyzer import COMMON_ISSUES
 
 
@@ -36,10 +36,11 @@ def strip_ansi(text: str) -> str:
 
 
 class TerminalWidget(tk.Frame):
-    def __init__(self, parent, vault=None, on_finding=None, **kw):
+    def __init__(self, parent, vault=None, on_finding=None, on_device_info=None, **kw):
         super().__init__(parent, **kw)
         self.vault = vault
         self.on_finding = on_finding
+        self.on_device_info = on_device_info
         self.rules = COMMON_ISSUES.get("cisco", [])
         self.vendor = "cisco"
 
@@ -142,8 +143,17 @@ class TerminalWidget(tk.Frame):
 
             threading.Thread(target=self._read_thread, daemon=True).start()
             threading.Thread(target=self._write_thread, daemon=True).start()
+            threading.Thread(target=self._fetch_info_thread, daemon=True).start()
         except Exception as e:
             self.after(0, lambda: self._write(f"Error: {e}\n", "error"))
+
+    def _fetch_info_thread(self):
+        try:
+            info = fetch_device_info(self.ssh_client, self.host, self.enable_pw or None)
+            if self.on_device_info:
+                self.after(0, lambda: self.on_device_info(info))
+        except Exception:
+            pass
 
     def _read_thread(self):
         while self.connected:

@@ -167,3 +167,63 @@ def run_commands(
 
     shell.close()
     return output
+
+
+def _parse_show_version(text: str) -> dict:
+    info = {}
+    m = re.search(r"ROM:.*\n.*\n(.+)", text)
+    m = re.search(r"Cisco (.+?) (?:revision|processor|\(", text, re.IGNORECASE)
+    if m:
+        info["model"] = m.group(1).strip()
+    m = re.search(r"Software, (.+?),", text, re.IGNORECASE)
+    if m:
+        info["ios_version"] = m.group(1).strip()
+    m = re.search(r"(.+?) uptime is (.+)", text, re.IGNORECASE)
+    if m:
+        info["hostname"] = m.group(1).strip()
+        info["uptime"] = m.group(2).strip()
+    m = re.search(r"processor board ID (\S+)", text, re.IGNORECASE)
+    if m:
+        info["serial"] = m.group(1)
+    m = re.search(r"with (\d+[KMG]? bytes?) of memory", text, re.IGNORECASE)
+    if m:
+        info["memory"] = m.group(1)
+    return info
+
+
+def _parse_show_processes_cpu(text: str) -> str:
+    m = re.search(r"CPU utilization for five seconds: (\S+%?\d*\.?\d*)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r"CPU utilization for five seconds:? (\S+)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r"five seconds: (\S+%)", text)
+    return m.group(1) if m else ""
+
+
+def fetch_device_info(
+    client: paramiko.SSHClient,
+    host: str,
+    enable_password: str | None = None,
+) -> "DeviceInfo":
+    from .models import DeviceInfo
+
+    ver = run_commands(client, ["show version"], enable_password=enable_password)
+    info = _parse_show_version(ver)
+    cpu = ""
+    try:
+        cpu_out = run_commands(client, ["show processes cpu"], enable_password=enable_password)
+        cpu = _parse_show_processes_cpu(cpu_out)
+    except Exception:
+        pass
+
+    return DeviceInfo(
+        hostname=info.get("hostname", host),
+        model=info.get("model", ""),
+        ios_version=info.get("ios_version", ""),
+        uptime=info.get("uptime", ""),
+        cpu=cpu,
+        memory=info.get("memory", ""),
+        serial=info.get("serial", ""),
+    )

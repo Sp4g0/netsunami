@@ -106,16 +106,7 @@ class NetzunamiApp:
         self._build_findings_panel(right_frame)
         self.panes.add(right_frame, minsize=200, width=300)
 
-        self.status = tk.Label(
-            self.root,
-            text="Disconnesso | Nessun finding | Vault: chiuso",
-            bg="#0a0a0a",
-            fg="#888888",
-            font=("Consolas", 9),
-            anchor="w",
-            padx=8,
-        )
-        self.status.pack(fill=tk.X)
+        self._build_statusbar()
 
     def _build_session_panel(self, parent):
         header = tk.Label(
@@ -187,6 +178,77 @@ class NetzunamiApp:
     def _build_findings_panel(self, parent):
         self.findings_panel = FindingsPanel(parent, bg="#1a1a1a")
         self.findings_panel.pack(fill=tk.BOTH, expand=True)
+
+    def _build_statusbar(self):
+        bar = tk.Frame(self.root, bg="#1e1e1e", height=26)
+        bar.pack(fill=tk.X)
+
+        SEG_BG = "#1e1e1e"
+        SEG_FG = "#aaaaaa"
+        SEP_COLOR = "#333333"
+        FONT = ("Consolas", 9)
+
+        def seg(text="", width=0):
+            lbl = tk.Label(bar, text=text, bg=SEG_BG, fg=SEG_FG,
+                          font=FONT, anchor="w", padx=6)
+            if width:
+                lbl.config(width=width)
+            return lbl
+
+        def sep():
+            s = tk.Label(bar, text="│", bg=SEG_BG, fg=SEP_COLOR,
+                        font=FONT, padx=3)
+            return s
+
+        self.bar_host = seg(" Disconnesso")
+        self.bar_host.pack(side=tk.LEFT)
+
+        self.bar_model = seg()
+        self.bar_ver = seg()
+        self.bar_uptime = seg()
+        self.bar_cpu = seg()
+        self.bar_mem = seg()
+
+        self.bar_segments = [
+            self.bar_model, self.bar_ver,
+            self.bar_uptime, self.bar_cpu, self.bar_mem,
+        ]
+
+        for s in self.bar_segments:
+            s.pack(side=tk.LEFT)
+            if s is not self.bar_segments[-1]:
+                sep().pack(side=tk.LEFT)
+
+        self.bar_status = seg("0 findings", width=12)
+        self.bar_status.pack(side=tk.RIGHT)
+
+        self.bar_vault = seg("Vault: chiuso", width=12)
+        self.bar_vault.pack(side=tk.RIGHT)
+        sep().pack(side=tk.RIGHT)
+
+    def _update_statusbar(self, host="", info=None, finding_count=0, vault_ok=False):
+        if not host:
+            self.bar_host.config(text=" Disconnesso")
+            for s in self.bar_segments:
+                s.config(text="")
+            self.bar_status.config(text="0 findings")
+            self.bar_vault.config(text="Vault: chiuso")
+            return
+
+        self.bar_host.config(text=f" {host}")
+        if info:
+            parts = [
+                info.model or "",
+                info.ios_version or "",
+                info.uptime or "",
+                f"CPU: {info.cpu}" if info.cpu else "",
+                info.memory or "",
+            ]
+            for lbl, val in zip(self.bar_segments, parts):
+                lbl.config(text=val)
+
+        self.bar_status.config(text=f"{finding_count} findings")
+        self.bar_vault.config(text="Vault: ✓" if vault_ok else "Vault: chiuso")
 
     def _unlock_vault(self):
         vault_path = Path.home() / ".netzunami" / "vault.enc"
@@ -287,7 +349,9 @@ class NetzunamiApp:
 
     def _open_terminal(self, host: str, user: str, password: str = "", enable_pw: str = ""):
         tab = tk.Frame(self.tabs, bg="#0a0a0a")
-        terminal = TerminalWidget(tab, vault=self.vault, on_finding=self._on_finding)
+        terminal = TerminalWidget(tab, vault=self.vault,
+                                 on_finding=self._on_finding,
+                                 on_device_info=self._on_device_info)
         terminal.pack(fill=tk.BOTH, expand=True)
 
         if password:
@@ -295,7 +359,7 @@ class NetzunamiApp:
             self.tabs.select(tab)
             self.current_terminal = terminal
             terminal.connect(host, user, password, enable_pw=enable_pw)
-            self._update_status(f"Connesso a {host}")
+            self._update_statusbar(host, finding_count=0, vault_ok=bool(self.vault._key))
         else:
             pw_dialog = tk.Toplevel(self.root)
             pw_dialog.title(f"Password per {user}@{host}")
@@ -335,15 +399,23 @@ class NetzunamiApp:
                 self.tabs.select(tab)
                 self.current_terminal = terminal
                 terminal.connect(host, user, pw, enable_pw=en)
-                self._update_status(f"Connesso a {host}")
+                self._update_statusbar(host, finding_count=0, vault_ok=bool(self.vault._key))
 
             tk.Button(pw_dialog, text="Connetti", bg="#2d5a27", fg="white",
                      relief=tk.FLAT, padx=20, command=do_connect).pack(pady=10)
 
+    def _on_device_info(self, info):
+        self._update_statusbar(host=getattr(self.current_terminal, 'host', ''),
+                              info=info,
+                              finding_count=self.findings_panel.listbox.size(),
+                              vault_ok=bool(self.vault._key))
+
     def _on_finding(self, rule: dict, line: str):
         self.findings_panel.add_finding(rule, line)
         n = self.findings_panel.listbox.size()
-        self._update_status(f"{n} findings")
+        self._update_statusbar(host=getattr(self.current_terminal, 'host', ''),
+                              finding_count=n,
+                              vault_ok=bool(self.vault._key))
 
     def _new_tab(self):
         self._quick_connect()
@@ -352,6 +424,9 @@ class NetzunamiApp:
         current = self.tabs.select()
         if current:
             self.tabs.forget(current)
+        n_tabs = len([c for c in self.tabs.children if c != "custom"])
+        if n_tabs <= 1:
+            self._update_statusbar()
 
     def _refresh_session_list(self):
         self.session_list.delete(0, tk.END)
@@ -655,13 +730,7 @@ class NetzunamiApp:
         messagebox.showinfo("Shortcuts", shortcuts)
 
     def _update_status(self, extra: str = ""):
-        parts = []
-        if extra:
-            parts.append(extra)
-        n = self.findings_panel.listbox.size()
-        parts.append(f"{n} findings")
-        parts.append("Vault: ✓" if self.vault._key else "Vault: chiuso")
-        self.status.config(text=" | ".join(parts))
+        pass
 
     def _on_close(self):
         if self.current_terminal:

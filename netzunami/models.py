@@ -38,6 +38,17 @@ class Finding:
 
 
 @dataclass
+class DeviceInfo:
+    hostname: str = ""
+    model: str = ""
+    ios_version: str = ""
+    uptime: str = ""
+    cpu: str = ""
+    memory: str = ""
+    serial: str = ""
+
+
+@dataclass
 class AnalysisResult:
     device: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
